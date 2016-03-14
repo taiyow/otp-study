@@ -1,5 +1,5 @@
 -module(bank5).
--behaviour(gen_server).
+%-behaviour(gen_server).
 
 % public API
 -export([start/0, start_link/0, deposit/2, draw/2, get/1, failure/0]).
@@ -11,44 +11,44 @@
 	{failure :: boolean(),
 	 accounts = dict:new()}).
 
+-define(BANKNAME, bank5). 
+
 %% public API
+%% - Ruby で言うところの module method
+
 start() ->
-    gen_server:start(?MODULE, #state{failure=false}, []).
+    gen_server:start({local, ?BANKNAME},
+		     ?MODULE, #state{failure=false}, []).
 
 start_link() ->
-    gen_server:start_link(?MODULE, #state{failure=false}, []).
+    gen_server:start_link({local, ?BANKNAME},
+			  ?MODULE, #state{failure=false}, []).
 
+%% public API
+%% - Ruby で言うところの instance method
 deposit(Person, Money) when is_integer(Money) ->
-    bank ! {self(), deposit, Person, Money},
-    receive
+    case gen_server:call(?BANKNAME, {deposit, Person, Money}) of
 	{ok,Balance} -> show_balance(Balance);
 	{error,Reason} -> io:format("error: ~p~n", [Reason])
-    after 500 ->
-	    io:format("timeout!!~n")
     end.
 
 draw(Person, Money) when is_integer(Money) ->
-    bank ! {self(), draw, Person, Money},
-    receive
+    case gen_server:call(?BANKNAME, {draw, Person, Money}) of
 	{ok,Balance} -> show_balance(Balance);
 	{error,Reason} -> io:format("error: ~p~n", [Reason])
-    after 500 ->
-	    io:format("timeout!!~n")
     end.
 
 get(Person)  ->
-    bank ! {self(), get, Person},
-    receive
+    case gen_server:call(?BANKNAME, {get, Person}) of
 	{ok,Balance} -> show_balance(Balance);
 	{error,Reason} -> io:format("error: ~p~n", [Reason])
-    after 500 ->
-	    io:format("timeout!!~n")
     end.
 
-failure()  ->
-    bank ! failure.   % 非同期API
+failure() ->
+    gen_server:cast(?BANKNAME, failure).
 
 %% gen_server callbacks
+%% - gen_server が外部のmoduleなのでここもpublicにする必要がある
 
 init(State) ->
     {ok, State}.
@@ -62,27 +62,23 @@ handle_call({deposit, Person, Money}, _From, State) ->
 	{error, no_such_account, _} ->
 	    NewAccounts = dict:store(Person, Money, Accounts),
 	    {reply, {ok, Money}, State#state{accounts=NewAccounts}};
-	{error, Reason, _} ->
-	    {reply, {error, Reason}, State};
-	{ok, NewBalance, NewAccounts} ->
-	    {reply, {ok, NewBalance}, State#state{accounts=NewAccounts}}
+	{Result, Arg, NewAccounts} ->
+	    {reply, {Result, Arg}, State#state{accounts=NewAccounts}}
     end;
 
 handle_call({draw, _, _}, _From, #state{failure=Failure}=State)
   when Failure ->
     {reply, {error, bank_is_failured}, State};
+
 handle_call({draw, Person, Money}, _From, State) ->
     Accounts = State#state.accounts,
-    case update_balance(Person, -Money, Accounts) of
-	{error, Reason, _} ->
-	    {reply, {error, Reason}, State};
-	{ok, NewBalance, NewAccounts} ->
-	    {repliy, {ok, NewBalance}, State#state{accounts=NewAccounts}}
-    end;
+    {Result, Arg, NewAccounts} = update_balance(Person, -Money, Accounts),
+    {reply, {Result, Arg}, State#state{accounts=NewAccounts}};
 
 handle_call({get, _}, _From, #state{failure=Failure}=State)
   when Failure ->
     {reply, {ok, 0}, State};
+
 handle_call({get, Person}, _From, State) -> 
     Accounts = State#state.accounts,
     case dict:find(Person, Accounts) of
@@ -98,6 +94,7 @@ handle_call(Msg, _From, State) ->
 
 handle_cast(failure, State) ->
     {noreply, State#state{failure=true}};
+
 handle_cast(Msg, State) ->
     io:format("unexpected message: ~p~n", [Msg]),
     {noreply, State}.
@@ -109,7 +106,6 @@ handle_info(Msg, State) ->
 code_change(_OldVsn, State, _Extra) ->
     %% No change planned.
     {ok, State}.
-
 
 terminate(normal, _State) ->
     io:format("terminate~n"),
