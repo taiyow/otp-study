@@ -1,5 +1,5 @@
 -module(bank5).
-%-behaviour(gen_server).
+-behaviour(gen_server).
 
 % public API
 -export([start/0, start_link/0, deposit/2, draw/2, get/1, failure/0]).
